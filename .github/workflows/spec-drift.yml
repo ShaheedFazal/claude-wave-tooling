@@ -1,0 +1,107 @@
+name: spec-drift
+
+# Reusable workflow — the T2.5 living-spec drift guard.
+#
+# It fails a pull request that changes behaviour-bearing application code
+# (per `.claude/project.json` -> applicationCodePaths) without any
+# accompanying change under `openspec/` — i.e. neither a spec edit under
+# openspec/specs/ nor an active change under openspec/changes/.
+#
+# Consumer repos opt in with a tiny caller workflow:
+#
+#   # .github/workflows/spec-drift.yml in the consumer repo
+#   name: spec-drift
+#   on:
+#     pull_request:
+#   jobs:
+#     spec-drift:
+#       uses: ShaheedFazal/claude-wave-tooling/.github/workflows/spec-drift.yml@main
+#
+# Requirements:
+#   - The consumer's `.claude/project.json` sets `applicationCodePaths`.
+#     Absent => the guard is a no-op (the consumer has not opted in).
+#   - claude-tooling -> Settings -> Actions -> General -> Access must allow
+#     the consumer repos to call this workflow (one-time setting).
+#
+# See claude-tooling/docs/spec-drift-guard.md.
+
+on:
+  workflow_call:
+
+jobs:
+  spec-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect spec drift
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+
+          CONFIG=".claude/project.json"
+          if [ ! -f "$CONFIG" ]; then
+            echo "spec-drift: no $CONFIG in this repo — nothing to guard. Skipping."
+            exit 0
+          fi
+
+          # applicationCodePaths is a list of git pathspecs. Absent or empty
+          # => the consumer has not opted in; the guard is a no-op.
+          APP_PATHS=()
+          while IFS= read -r p; do
+            [ -n "$p" ] && APP_PATHS+=("$p")
+          done < <(jq -r '(.applicationCodePaths // []) | .[]' "$CONFIG")
+          if [ "${#APP_PATHS[@]}" -eq 0 ]; then
+            echo "spec-drift: applicationCodePaths not configured — guard disabled."
+            exit 0
+          fi
+
+          if [ -z "${BASE_REF:-}" ]; then
+            echo "spec-drift: no base ref (not a pull_request event) — skipping."
+            exit 0
+          fi
+
+          git fetch --quiet origin "$BASE_REF"
+          RANGE="origin/${BASE_REF}...HEAD"
+
+          APP_CHANGED=$(git diff --name-only "$RANGE" -- "${APP_PATHS[@]}")
+          OPENSPEC_CHANGED=$(git diff --name-only "$RANGE" -- 'openspec')
+
+          if [ -z "$APP_CHANGED" ]; then
+            echo "spec-drift: no application-code changes in this PR — OK."
+            exit 0
+          fi
+
+          if [ -n "$OPENSPEC_CHANGED" ]; then
+            echo "spec-drift: application code changed and openspec/ was updated — OK."
+            echo "openspec/ files touched:"
+            echo "$OPENSPEC_CHANGED" | sed 's/^/  /'
+            exit 0
+          fi
+
+          echo "::error::spec-drift — application code changed but no OpenSpec update."
+          {
+            echo ""
+            echo "Application-code files changed in this PR:"
+            echo "$APP_CHANGED" | sed 's/^/  /'
+            echo ""
+            echo "Nothing under openspec/ was touched — neither a spec edit"
+            echo "(openspec/specs/.../spec.md) nor an active change (openspec/changes/)."
+            echo "The living spec library is the source of truth; letting code and"
+            echo "spec drift apart silently is the failure this guard exists to catch."
+            echo ""
+            echo "Fix one of:"
+            echo "  - edit the relevant openspec/specs/.../spec.md directly (small change), or"
+            echo "  - add a full openspec/changes/<name>/ entry (larger change)."
+            echo ""
+            echo "If this change genuinely needs no spec update, a maintainer can merge"
+            echo "past this check deliberately — the guard surfaces the question, the"
+            echo "human decides."
+            echo ""
+            echo "See claude-tooling/docs/spec-drift-guard.md."
+          } >&2
+          exit 1
