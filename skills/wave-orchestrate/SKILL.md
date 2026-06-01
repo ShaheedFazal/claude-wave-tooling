@@ -348,7 +348,7 @@ While teammates work:
 
 ### Check the cross-tab mailbox (MANDATORY before each major step)
 
-Before Steps 3, 5, 7, 8, 9b, 10, and each Decision Gate (4, 6, 12), check:
+Before Steps 3, 5, 7, 8, 9b, 9c, 10, and each Decision Gate (4, 6, 12), check:
 
 ```bash
 # Check both worktree-local and main-repo mailbox (the planner writes to main-repo paths)
@@ -525,7 +525,7 @@ Concrete `AskUserQuestion` shape (single question, two options — never multi-s
 
 - Question: `"Preview ready. Approve merge to main?"`
 - Options:
-  1. `"Approve — merge to main"` (description: "Looks right; proceed to integrator")
+  1. `"Approve — merge to main"` (description: "Looks right; proceed to integrator. If the wave added an OpenSpec change, this also archives it and syncs its specs into the library — all in the same PR.")
   2. `"Halt — something looks wrong"` (description: "Stop here. The wave stays in its current state; nothing is merged. Re-run the orchestrator after fixes are pushed.")
 
 Do not add a third "skip preview" option here — the human has already seen the URL; if they got this far the only meaningful choices are approve or halt. The skip option exists in 9b.2 only because the gate itself failed.
@@ -596,7 +596,41 @@ How does it look?
   [Approve — merge to main]   [Halt — something looks wrong]
 ```
 
-The human opens both URLs, clicks through `/products/example-item` and the homepage on Astro, opens `/admin → Products` on Payload to see if the new spec field appears in the editor. Two minutes of clicking, then Approve. Step 10 spawns the integrator. Cleanup in 9b.4 kills both servers.
+The human opens both URLs, clicks through `/products/example-item` and the homepage on Astro, opens `/admin → Products` on Payload to see if the new spec field appears in the editor. Two minutes of clicking, then Approve. Step 9c archives any OpenSpec change onto the branch, then Step 10 spawns the integrator. Cleanup in 9b.4 kills both servers.
+
+## Step 9c: Archive the wave's OpenSpec change(s) onto the wave branch (pre-merge gate)
+
+**Purpose.** If the wave introduced an OpenSpec change (a new `openspec/changes/<name>/` directory), that change MUST be archived — its delta specs synced into the library and its directory moved to `openspec/changes/archive/` — as part of **this** wave's PR, while the branch still exists. Archiving here, pre-merge, is the whole point: one PR instead of two, no orphaned change directory lingering under `openspec/changes/`, and any spec-sync error is caught at the merge gate instead of landing unreviewed on `main`.
+
+This is the hard archive gate the flow previously lacked. Recorded failure (FEEDBACK 2026-05-13 / #166): a change shipped inside a wave PR but was never archived, because the only archive step ran *post-merge* (old Step 12) — by then the branch was gone, so the archive needed its own issue + branch + PR, and on unattended waves it was simply skipped, leaving the shipped requirements out of the spec library.
+
+**Behaviour gate.** Detect change directories the wave added:
+
+```bash
+git diff --name-only --diff-filter=A main..HEAD -- 'openspec/changes/' \
+  | grep -v '^openspec/changes/archive/' \
+  | sed -E 's#^openspec/changes/([^/]+)/.*#\1#' | sort -u
+```
+
+- **No output:** the wave touched no OpenSpec change. Skip this step entirely; proceed to Step 10.
+- **One or more change names:** archive each, in order, before Step 10.
+
+**Per change:**
+
+1. **Sync delta specs into the library** using the `openspec-sync-specs` skill (Skill tool, or delegate to a `general-purpose` agent). It preserves the delta's full relative path, so it is correct for **both** flat (`openspec/specs/<capability>/spec.md`) and panel-nested (`openspec/specs/<panel>/<capability>/spec.md`) layouts. Do **not** rely on `openspec archive`'s built-in sync — the upstream CLI is flat-only (Fission-AI/OpenSpec #796) and silently writes nested deltas to the wrong path. Apply all deltas.
+2. **Move the change directory** (the date prefix is added here, by the archive step — never by the change name itself):
+   ```bash
+   git mv openspec/changes/<name> "openspec/changes/archive/$(date -u +%Y-%m-%d)-<name>"
+   ```
+3. **Tick stale tasks.** A change that's about to merge is complete by definition. If its `tasks.md` still has unticked `- [ ]` boxes for shipped work, tick them in this same commit (FEEDBACK 2026-05-26 — the task-owner gap that otherwise produces a spurious "N incomplete tasks" archive warning).
+4. **Commit on the wave branch** so the archive rides the PR the integrator merges:
+   ```bash
+   git add -A openspec && git commit -m "archive(openspec): <name> + sync delta specs"
+   ```
+
+**If a delta will not cleanly sync** (e.g. a MODIFIED block whose anchor section no longer exists in the library, or a successor requirement that contradicts a predecessor still present), do **not** force it and do **not** proceed to merge. Halt exactly as Step 9b's Halt path does — record `phase = "halted_at_archive"` on the wave state JSON, leave the worktree intact, append a one-line note to `{{config.crossTabDir}}/planner.md`. A sync conflict is a real signal that the library and the delta disagree; resolve it before `main` sees it, not after.
+
+The 9b preview gate's prompt should already have told the human that approving the merge includes archiving the wave's OpenSpec change(s) — so no second approval is needed here. The archive is part of what they approved.
 
 ## Step 10: Spawn the integrator teammate
 
@@ -700,7 +734,7 @@ This contract sits alongside the merge contract above and addresses a different 
 
 ## Step 11: Update wave state to completed (UNCONDITIONAL)
 
-**This step runs IMMEDIATELY after the integrator reports success — before any human gate, archive, or retro.** Even if the session crashes after this point, the state file reflects reality.
+**This step runs IMMEDIATELY after the integrator reports success — before any human gate or retro.** (The OpenSpec change was already archived pre-merge in Step 9c, so it merged as part of the wave PR — there is no separate post-merge archive.) Even if the session crashes after this point, the state file reflects reality.
 
 1. Find the PR number from the integrator's report (or via `gh pr list --repo {{config.repo}} --state merged --head <wave-branch> --json number,mergedAt --limit 1`).
 2. Update `{{config.stateDir}}/waves/<wave-name>.json`:
@@ -729,9 +763,10 @@ If the integrator FAILS (merge conflict, build break), update phase to `"failed"
 
 When the integrator is done:
 
-1. Show the merge summary, build status, deploy status.
-2. Use `AskUserQuestion`: "Wave complete. Approve to archive OpenSpec changes?"
-3. On approval, run `/opsx:archive` for each completed change.
+1. Show the merge summary, build status, deploy status. If the wave had an OpenSpec change, note that it was archived and its specs synced **as part of this PR** in Step 9c — there is nothing left to archive post-merge.
+2. Use `AskUserQuestion`: "Wave complete. Proceed to retro + cleanup?" (options: proceed / amend with a follow-up issue / leave open).
+
+**Do NOT run `/opsx:archive` here.** Archiving moved to Step 9c (pre-merge) so it rides the wave PR. Running it now would find nothing to archive (the change is already under `openspec/changes/archive/` on `main`) — and if a change *is* still un-archived at this point, that means Step 9c was skipped or the wave merged out-of-band: treat it as a defect, file a follow-up archive issue, and fix the gate, rather than papering over it with a manual post-merge archive.
 
 ## Step 14: Spawn the retro teammate (background)
 
