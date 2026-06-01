@@ -21,12 +21,21 @@ The three wave-* skills are project-agnostic. Duplicating them per-project guara
 
 Framework-specific patterns (`build-frontend`, `analyst`, `review`, `comply`, etc.) are per-project and stay in each consumer's `.claude/skills/<prefix>-*/`.
 
+## Prerequisites
+
+`bootstrap.sh` checks for these and exits non-zero if any are missing:
+
+- **[OpenSpec](https://openspec.dev)** (`brew install openspec`) — required. The wave flow is spec-driven: the analyst authors OpenSpec changes and the pre-merge archive gate (wave-orchestrate Step 9c) syncs their specs via the bundled `openspec-sync-specs` skill.
+- **`gh`** (`brew install gh`, then `gh auth login`) — PR/merge automation.
+- **`node`** + a JSON-schema validator (`ajv-cli` via `npx`, or `python3` + `jsonschema`) — `project.json` validation.
+- **cmux** — wave sessions run in cmux tabs.
+
 ## Install (existing project adopting these skills)
 
 ```bash
 git clone https://github.com/ShaheedFazal/claude-wave-tooling ~/Dev/claude-tooling
 cd ~/Dev/claude-tooling
-./scripts/bootstrap.sh    # symlinks ~/.claude/skills/wave-{planner,orchestrate,retro} + verifies dependencies
+./scripts/bootstrap.sh    # symlinks ~/.claude/skills/{wave-planner,wave-orchestrate,wave-retro,openspec-sync-specs} + verifies dependencies
 ```
 
 Then in the consuming project repo:

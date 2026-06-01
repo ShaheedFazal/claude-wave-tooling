@@ -4,9 +4,11 @@
 # Idempotent. Safe to re-run.
 #
 # Responsibilities:
-#   1. Symlink ~/.claude/skills/wave-{planner,orchestrate,retro} to the
-#      checkout of this repo. (Three skills — wave-toolsmith and
-#      wave-start-wave were absorbed into wave-planner in v0.2.0.)
+#   1. Symlink ~/.claude/skills/{wave-planner,wave-orchestrate,wave-retro,
+#      openspec-sync-specs} to the checkout of this repo. (The three wave
+#      skills — wave-toolsmith and wave-start-wave were absorbed into
+#      wave-planner in v0.2.0 — plus openspec-sync-specs, the nesting-aware
+#      spec sync the wave archive gate depends on.)
 #   2. Verify required tools are installed (gh, cmux, openspec, node, a
 #      JSON-schema validator — ajv-cli or python3+jsonschema).
 #   3. If run from a project directory containing .claude/project.json,
@@ -52,9 +54,9 @@ fi
 
 mkdir -p "$SKILLS_DIR"
 
-for s in planner orchestrate retro; do
-  SRC="$TOOLING_HOME/skills/wave-$s"
-  DST="$SKILLS_DIR/wave-$s"
+for skill in wave-planner wave-orchestrate wave-retro openspec-sync-specs; do
+  SRC="$TOOLING_HOME/skills/$skill"
+  DST="$SKILLS_DIR/$skill"
 
   if [ ! -d "$SRC" ]; then
     echo "ERROR: expected shared skill missing: $SRC" >&2
@@ -65,17 +67,17 @@ for s in planner orchestrate retro; do
     # Already a symlink; update if target differs
     EXISTING_TARGET=$(readlink "$DST")
     if [ "$EXISTING_TARGET" = "$SRC" ]; then
-      echo "  [ok] wave-$s -> $SRC"
+      echo "  [ok] $skill -> $SRC"
     else
       ln -sfn "$SRC" "$DST"
-      echo "  [updated] wave-$s -> $SRC (was: $EXISTING_TARGET)"
+      echo "  [updated] $skill -> $SRC (was: $EXISTING_TARGET)"
     fi
   elif [ -e "$DST" ]; then
     echo "ERROR: $DST exists and is not a symlink. Remove or rename it before running bootstrap." >&2
     exit 3
   else
     ln -s "$SRC" "$DST"
-    echo "  [created] wave-$s -> $SRC"
+    echo "  [created] $skill -> $SRC"
   fi
 done
 
@@ -129,7 +131,7 @@ else
 
   check_cmd gh "brew install gh (then \`gh auth login\`)"
   check_cmd cmux "see https://github.com/... (cmux is an Anthropic-internal distribution)"
-  check_cmd openspec "see OpenSpec install docs"
+  check_cmd openspec "brew install openspec (or see https://openspec.dev) — required: the wave archive gate and openspec-sync-specs depend on it"
   check_cmd node "brew install node"
   check_cmd python3 "brew install python"
 
