@@ -73,7 +73,9 @@ for skill in wave-planner wave-orchestrate wave-retro openspec-sync-specs; do
       echo "  [updated] $skill -> $SRC (was: $EXISTING_TARGET)"
     fi
   elif [ -e "$DST" ]; then
-    echo "ERROR: $DST exists and is not a symlink. Remove or rename it before running bootstrap." >&2
+    echo "ERROR: $DST exists and is not a symlink — likely a loose copy from before it became a bundled skill." >&2
+    echo "       Remove it ('rm -rf $DST') and re-run; bootstrap will recreate it as a symlink into this checkout." >&2
+    echo "       See MIGRATIONS.md (the '(install)' entries) if you have local edits to preserve first." >&2
     exit 3
   else
     ln -s "$SRC" "$DST"

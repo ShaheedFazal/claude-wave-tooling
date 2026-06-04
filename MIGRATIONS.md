@@ -1,6 +1,6 @@
 # claude-tooling project.json migrations
 
-Each entry describes a change to the schema's `minimumSchemaVersion` and what consumers must do before pulling.
+Most entries describe a change to the schema's `minimumSchemaVersion` and what consumers must do before pulling. A few — tagged **(install)** — cover bootstrap or skill-layout changes that need a one-time action on existing machines rather than a `project.json` edit.
 
 The shared wave skills halt with an actionable error if a project's `.claude/project.json` is below the current `minimumSchemaVersion`. The fix is always to update `.claude/project.json` in each consuming repo, then commit it on whatever branch makes sense for that consumer.
 
@@ -55,3 +55,28 @@ The fix: let `.claude/project.json` declare a prod health endpoint and a jq asse
 2. Commit the change on whatever branch the project uses.
 3. Re-run `~/Dev/claude-tooling/scripts/validate-config.sh .claude/project.json` to confirm the schema accepts it.
 4. Projects **without** a live prod endpoint (e.g. `acme-app` as of 2026-04-21) still need step 1 (the version bump) but can omit `prodHealthProbe` entirely. The planner behaves as it did pre-v3 when the probe is absent.
+
+---
+
+## (install) 2026-06-04: `openspec-sync-specs` becomes a bundled, symlinked skill
+
+**Type:** bootstrap/install migration — **no `project.json` schema change**, no `minimumSchemaVersion` bump. Affects only the `~/.claude/skills/` layout, and only on a machine that already had a hand-installed copy of this skill.
+
+**Why:** `openspec-sync-specs` — the nesting-aware spec sync that the wave archive gate (`wave-orchestrate` Step 9c) depends on — used to be a loose, hand-maintained directory under `~/.claude/skills/`. It lived in no repo, so it was neither backed up nor distributed. It is now versioned here under `skills/openspec-sync-specs/` and symlinked by `bootstrap.sh` alongside the wave skills.
+
+**What changed:**
+
+- `skills/openspec-sync-specs/` is now tracked in this repo (source of truth).
+- `bootstrap.sh` now iterates `wave-planner wave-orchestrate wave-retro openspec-sync-specs` and symlinks each into `~/.claude/skills/`.
+
+**Consumer migration steps (only if bootstrap errors):**
+
+Fresh installs, and machines that never had the loose copy, need **no action** — `bootstrap.sh` just creates the symlink. But on a machine where `~/.claude/skills/openspec-sync-specs` already exists as a **real directory** (a pre-existing hand-installed copy), bootstrap halts — by design, it refuses to clobber a directory it didn't create:
+
+> `ERROR: …/openspec-sync-specs exists and is not a symlink. Remove or rename it before running bootstrap.`
+
+Fix:
+
+1. If your loose copy has local edits worth keeping, diff it against the repo copy and port them in first: `diff -r ~/.claude/skills/openspec-sync-specs ~/Dev/claude-tooling/skills/openspec-sync-specs`. Commit any ported changes.
+2. Remove the loose copy: `rm -rf ~/.claude/skills/openspec-sync-specs`.
+3. Re-run `~/Dev/claude-tooling/scripts/bootstrap.sh` — it recreates the path as a symlink into the checkout (`[created] openspec-sync-specs -> …`).
